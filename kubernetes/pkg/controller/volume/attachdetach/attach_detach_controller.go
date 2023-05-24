@@ -366,7 +366,7 @@ func (adc *attachDetachController) Run(stopCh <-chan struct{}) {
 	if !kcache.WaitForNamedCacheSync("attach detach", stopCh, synced...) {
 		return
 	}
-
+    // 记录已经在node节点上挂载的pv
 	err := adc.populateActualStateOfWorld()
 	if err != nil {
 		klog.Errorf("Error populating the actual state of world: %v", err)

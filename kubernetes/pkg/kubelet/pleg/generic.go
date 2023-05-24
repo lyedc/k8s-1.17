@@ -135,6 +135,7 @@ func (g *GenericPLEG) Start() {
 // relistThreshold is the maximum interval between two relist.
 func (g *GenericPLEG) Healthy() (bool, error) {
 	relistTime := g.getRelistTime()
+	//TODO: 如果是0的话，表示还没有完成从docker中获取全部容器的请求。只是获取，不表示处理。。
 	if relistTime.IsZero() {
 		return false, fmt.Errorf("pleg has yet to be successful")
 	}
@@ -200,20 +201,23 @@ func (g *GenericPLEG) relist() {
 	}()
 
 	// Get all the pods.
+	//todo: 通过调用docker的接口获取所有的pod，pod中包含了sandbox和contaienrd
 	podList, err := g.runtime.GetPods(true)
 	if err != nil {
 		klog.Errorf("GenericPLEG: Unable to retrieve pods: %v", err)
 		return
 	}
-
+    // TODO:更新最后一个获取pod列表的时间
 	g.updateRelistTime(timestamp)
-
+    // 进行类型的转换
 	pods := kubecontainer.Pods(podList)
 	// update running pod and container count
 	updateRunningPodAndContainerMetrics(pods)
+	// 这个方法中记录了oldpod和currentpod的内容。
 	g.podRecords.setCurrent(pods)
 
 	// Compare the old and the current pods, and generate events.
+	// 根据pod的状态也就是容器的状态。生成容器的事件
 	eventsByPodID := map[types.UID][]*PodLifecycleEvent{}
 	for pid := range g.podRecords {
 		oldPod := g.podRecords.getOld(pid)

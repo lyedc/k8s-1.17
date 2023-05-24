@@ -303,6 +303,7 @@ func (dswp *desiredStateOfWorldPopulator) processPodVolumes(
 	}
 
 	allVolumesAdded := true
+	// 获取 pod中container所有的mount的name以及devices。。。
 	mounts, devices := util.GetPodVolumeNames(pod)
 
 	expandInUsePV := utilfeature.DefaultFeatureGate.Enabled(features.ExpandInUsePersistentVolumes)
@@ -475,6 +476,7 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 			pvcSource.ClaimName)
 
 		// If podVolume is a PVC, fetch the real PV behind the claim
+		//todo: 获取真实的pvc对象
 		pvc, err := dswp.getPVCExtractPV(
 			podNamespace, pvcSource.ClaimName)
 		if err != nil {
@@ -484,6 +486,7 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 				pvcSource.ClaimName,
 				err)
 		}
+		// todo: pv的名字和pvc的唯一id
 		pvName, pvcUID := pvc.Spec.VolumeName, pvc.UID
 
 		klog.V(5).Infof(
@@ -494,6 +497,7 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 			pvName)
 
 		// Fetch actual PV object
+		// todo: 包含了真实的pv对象
 		volumeSpec, volumeGidValue, err :=
 			dswp.getPVSpec(pvName, pvcSource.ReadOnly, pvcUID)
 		if err != nil {
@@ -556,6 +560,7 @@ func (dswp *desiredStateOfWorldPopulator) createVolumeSpec(
 	clonedPodVolume := podVolume.DeepCopy()
 
 	spec := volume.NewSpecFromVolume(clonedPodVolume)
+	// todo:
 	migratable, err := dswp.csiMigratedPluginManager.IsMigratable(spec)
 	if err != nil {
 		return nil, nil, "", err

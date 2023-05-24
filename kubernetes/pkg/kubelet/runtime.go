@@ -93,10 +93,12 @@ func (s *runtimeState) runtimeErrors() error {
 	errs := []error{}
 	if s.lastBaseRuntimeSync.IsZero() {
 		errs = append(errs, errors.New("container runtime status check may not have completed yet"))
+		//TODO: 最后一次同步的时间加上最大的基础等待时间，如果超过了这个时间， 那么就表示container runtime down了。
 	} else if !s.lastBaseRuntimeSync.Add(s.baseRuntimeSyncThreshold).After(time.Now()) {
 		errs = append(errs, errors.New("container runtime is down"))
 	}
 	for _, hc := range s.healthChecks {
+		// 进行pleg的健康检测，也就是对pleg，health() 方法进行执行，判断上次检测的结果是否大于了3分钟了。。
 		if ok, err := hc.fn(); !ok {
 			errs = append(errs, fmt.Errorf("%s is not healthy: %v", hc.name, err))
 		}

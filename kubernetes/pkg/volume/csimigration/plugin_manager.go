@@ -103,7 +103,7 @@ func (pm PluginManager) IsMigratable(spec *volume.Spec) (bool, error) {
 	if spec == nil {
 		return false, fmt.Errorf("could not find if plugin is migratable because volume spec is nil")
 	}
-
+    // 因为我们不是csi，所以不用管这个。这里会报错，但是直接忽略了。。
 	pluginName, _ := pm.GetInTreePluginNameFromSpec(spec.PersistentVolume, spec.Volume)
 	if pluginName == "" {
 		return false, nil

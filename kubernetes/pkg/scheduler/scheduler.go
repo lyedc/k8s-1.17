@@ -421,7 +421,7 @@ func (sched *Scheduler) Run(ctx context.Context) {
 	if !cache.WaitForCacheSync(ctx.Done(), sched.scheduledPodsHasSynced) {
 		return
 	}
-
+    //todo: 每次只调度一个pod。
 	wait.UntilWithContext(ctx, sched.scheduleOne, 0)
 }
 
@@ -590,7 +590,7 @@ func (sched *Scheduler) bind(ctx context.Context, assumed *v1.Pod, targetNode st
 // scheduleOne does the entire scheduling workflow for a single pod.  It is serialized on the scheduling algorithm's host fitting.
 func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	fwk := sched.Framework
-
+    // 从队列中获取一个等待调度的pod
 	podInfo := sched.NextPod()
 	// pod could be nil when schedulerQueue is closed
 	if podInfo == nil || podInfo.Pod == nil {
@@ -613,12 +613,14 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	defer cancel()
 	scheduleResult, err := sched.Algorithm.Schedule(schedulingCycleCtx, state, pod)
 	if err != nil {
+		//todo: 3.当执行调度算法失败时，上报调度失败event，更新pod的status
 		sched.recordSchedulingFailure(podInfo.DeepCopy(), err, v1.PodReasonUnschedulable, err.Error())
 		// Schedule() may have failed because the pod would not fit on any host, so we try to
 		// preempt, with the expectation that the next time the pod is tried for scheduling it
 		// will fit due to the preemption. It is also possible that a different pod will schedule
 		// into the resources that were preempted, but this is harmless.
 		if fitError, ok := err.(*core.FitError); ok {
+			//todo: 4.当没有找到合适的节点时，判断scheduler是否开启了抢占调度机制，是则调用sched.preempt执行抢占逻辑
 			if sched.DisablePreemption {
 				klog.V(3).Infof("Pod priority feature is not enabled or preemption is disabled by scheduler configuration." +
 					" No preemption is performed.")
@@ -650,7 +652,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	// This allows us to keep scheduling without waiting on binding to occur.
 	assumedPodInfo := podInfo.DeepCopy()
 	assumedPod := assumedPodInfo.Pod
-
+	//todo: 5.更新cache，判断关联pvc是否都已bound
 	// Assume volumes first before assuming the pod.
 	//
 	// If all volumes are completely bound, then allBound is true and binding will be skipped.
@@ -674,6 +676,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	}
 
 	// assume modifies `assumedPod` by setting NodeName=scheduleResult.SuggestedHost
+	//todo:7.调用sched.assume，在scheduler的cache中记录这个pod已经调度了，因为更新pod的nodeName是异步操作，防止pod被重复调度
 	err = sched.assume(assumedPod, scheduleResult.SuggestedHost)
 	if err != nil {
 		// This is most probably result of a BUG in retrying logic.
@@ -688,6 +691,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		return
 	}
 	// bind the pod to its host asynchronously (we can do this b/c of the assumption step above).
+	//todo: 8.起一个goroutine，异步执行pod的binding操作
 	go func() {
 		bindingCycleCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -715,6 +719,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		}
 
 		// Bind volumes first before Pod
+		// todo: 如果发现pod中的pvc没有被绑定的话，就开始绑定
 		if !allBound {
 			err := sched.bindVolumes(assumedPod)
 			if err != nil {
@@ -740,7 +745,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			sched.recordSchedulingFailure(assumedPodInfo, preBindStatus.AsError(), reason, preBindStatus.Message())
 			return
 		}
-
+        // 对pod进行绑定，也就是给apiserver发送请求，告诉apiserver  pod 被调度到这个服务器上了。
 		err := sched.bind(bindingCycleCtx, assumedPod, scheduleResult.SuggestedHost, state)
 		metrics.E2eSchedulingLatency.Observe(metrics.SinceInSeconds(start))
 		metrics.DeprecatedE2eSchedulingLatency.Observe(metrics.SinceInMicroseconds(start))

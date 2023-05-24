@@ -319,6 +319,7 @@ func (m *kubeGenericRuntimeManager) Status() (*kubecontainer.RuntimeStatus, erro
 // exited and dead containers (used for garbage collection).
 func (m *kubeGenericRuntimeManager) GetPods(all bool) ([]*kubecontainer.Pod, error) {
 	pods := make(map[kubetypes.UID]*kubecontainer.Pod)
+	//todo: 调用接口获取到所有的sandboxes..
 	sandboxes, err := m.getKubeletSandboxes(all)
 	if err != nil {
 		return nil, err
@@ -345,7 +346,7 @@ func (m *kubeGenericRuntimeManager) GetPods(all bool) ([]*kubecontainer.Pod, err
 		}
 		p.Sandboxes = append(p.Sandboxes, converted)
 	}
-
+   //todo: 调用接口获取到所有的
 	containers, err := m.getKubeletContainers(all)
 	if err != nil {
 		return nil, err

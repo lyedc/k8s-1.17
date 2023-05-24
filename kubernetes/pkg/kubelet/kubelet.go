@@ -2171,7 +2171,8 @@ func (kl *Kubelet) LatestLoopEntryTime() time.Time {
 func (kl *Kubelet) updateRuntimeUp() {
 	kl.updateRuntimeMux.Lock()
 	defer kl.updateRuntimeMux.Unlock()
-
+    //todo: 这里最终会调用 RemoteRuntimeService 方法的status来完成状态的检测。
+    // 最终需要的是runtime的Ready 和 NetworkReady两个组件的Ready
 	s, err := kl.containerRuntime.Status()
 	if err != nil {
 		klog.Errorf("Container runtime sanity check failed: %v", err)
@@ -2185,6 +2186,7 @@ func (kl *Kubelet) updateRuntimeUp() {
 	// TODO(random-liu): Consider to send node event when optional
 	// condition is unmet.
 	klog.V(4).Infof("Container runtime status: %v", s)
+	// 检测runtime的network状态。
 	networkReady := s.GetRuntimeCondition(kubecontainer.NetworkReady)
 	if networkReady == nil || !networkReady.Status {
 		klog.Errorf("Container runtime network not ready: %v", networkReady)
@@ -2194,6 +2196,7 @@ func (kl *Kubelet) updateRuntimeUp() {
 		kl.runtimeState.setNetworkState(nil)
 	}
 	// information in RuntimeReady condition will be propagated to NodeReady condition.
+	// 检测runtime的runtime的状态。
 	runtimeReady := s.GetRuntimeCondition(kubecontainer.RuntimeReady)
 	// If RuntimeReady is not set or is false, report an error.
 	if runtimeReady == nil || !runtimeReady.Status {
@@ -2204,6 +2207,7 @@ func (kl *Kubelet) updateRuntimeUp() {
 	}
 	kl.runtimeState.setRuntimeState(nil)
 	kl.oneTimeInitializer.Do(kl.initializeRuntimeDependentModules)
+	// 设置最后检测的时间。
 	kl.runtimeState.setRuntimeSync(kl.clock.Now())
 }
 

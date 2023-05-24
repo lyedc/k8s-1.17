@@ -248,6 +248,7 @@ func (ctrl *PersistentVolumeController) updateClaim(claim *v1.PersistentVolumeCl
 	if !new {
 		return
 	}
+	// 同步pvc
 	err = ctrl.syncClaim(claim)
 	if err != nil {
 		if errors.IsConflict(err) {
@@ -454,6 +455,7 @@ func (ctrl *PersistentVolumeController) volumeWorker() {
 // syncClaim is not reentrant.
 func (ctrl *PersistentVolumeController) claimWorker() {
 	workFunc := func() bool {
+		//todo: 从pvc的队列中获取pvc的key
 		keyObj, quit := ctrl.claimQueue.Get()
 		if quit {
 			return true
@@ -467,6 +469,7 @@ func (ctrl *PersistentVolumeController) claimWorker() {
 			klog.V(4).Infof("error getting namespace & name of claim %q to get claim from informer: %v", key, err)
 			return false
 		}
+		//找到对应的pvc
 		claim, err := ctrl.claimLister.PersistentVolumeClaims(namespace).Get(name)
 		if err == nil {
 			// The claim still exists in informer cache, the event must have

@@ -499,6 +499,7 @@ func (og *operationGenerator) GenerateMountVolumeFunc(
 
 	mountVolumeFunc := func() (error, error) {
 		// Get mounter plugin
+		// plugin是一个interface里面定义了不同的方法。各个不同的插件，都会实现这个方法。。
 		volumePlugin, err := og.volumePluginMgr.FindPluginBySpec(volumeToMount.VolumeSpec)
 		if err != nil || volumePlugin == nil {
 			return volumeToMount.GenerateError("MountVolume.FindPluginBySpec failed", err)
@@ -508,7 +509,7 @@ func (og *operationGenerator) GenerateMountVolumeFunc(
 		if affinityErr != nil {
 			return volumeToMount.GenerateError("MountVolume.NodeAffinity check failed", affinityErr)
 		}
-
+        //todo: 获取到一个mounter的interface
 		volumeMounter, newMounterErr := volumePlugin.NewMounter(
 			volumeToMount.VolumeSpec,
 			volumeToMount.Pod,

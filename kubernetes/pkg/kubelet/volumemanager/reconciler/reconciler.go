@@ -237,6 +237,7 @@ func (rc *reconciler) reconcile() {
 				remountingLogStr = "Volume is already mounted to pod, but remount was requested."
 			}
 			klog.V(4).Infof(volumeToMount.GenerateMsgDetailed("Starting operationExecutor.MountVolume", remountingLogStr))
+			// todo: 这里是开始mount需要的路径到服务器上。。。
 			err := rc.operationExecutor.MountVolume(
 				rc.waitForAttachTimeout,
 				volumeToMount.VolumeToMount,

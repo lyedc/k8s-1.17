@@ -190,12 +190,13 @@ func (g *genericScheduler) PredicateMetadataProducer() predicates.MetadataProduc
 func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleState, pod *v1.Pod) (result ScheduleResult, err error) {
 	trace := utiltrace.New("Scheduling", utiltrace.Field{Key: "namespace", Value: pod.Namespace}, utiltrace.Field{Key: "name", Value: pod.Name})
 	defer trace.LogIfLong(100 * time.Millisecond)
-
+    // todo: 检测pod上需要的资源有没有被删除的。从而无法进行调度。。。
 	if err := podPassesBasicChecks(pod, g.pvcLister); err != nil {
 		return result, err
 	}
 	trace.Step("Basic checks done")
-
+	//TODO: 1.快照 node 信息，每次调度 pod 时都会获取一次快照
+	// 调用g.snapshot，获取当前的所有node节点信息快照，用于本轮调度，包括下面执行的预算算法与优选算法都将使用该node快照；
 	if err := g.Snapshot(); err != nil {
 		return result, err
 	}
@@ -206,6 +207,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 	}
 
 	// Run "prefilter" plugins.
+	//todo: 调度框架
 	preFilterStatus := g.framework.RunPreFilterPlugins(ctx, state, pod)
 	if !preFilterStatus.IsSuccess() {
 		return result, preFilterStatus.AsError()
@@ -213,6 +215,8 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 	trace.Step("Running prefilter plugins done")
 
 	startPredicateEvalTime := time.Now()
+	//todo: 2.Predict阶段：找到所有满足调度条件的节点feasibleNodes，不满足的就直接过滤
+	// // 根据prefilter插件和extender过滤节点以找到适合 pod 的节点。
 	filteredNodes, failedPredicateMap, filteredNodesStatuses, err := g.findNodesThatFit(ctx, state, pod)
 	if err != nil {
 		return result, err
@@ -224,7 +228,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 	if !postfilterStatus.IsSuccess() {
 		return result, postfilterStatus.AsError()
 	}
-
+	//TODO: 3.预选后没有合适的 node 直接返回
 	if len(filteredNodes) == 0 {
 		return result, &FitError{
 			Pod:                   pod,
@@ -241,6 +245,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 
 	startPriorityEvalTime := time.Now()
 	// When only one node after predicate, just use it.
+	//TODO: 4.当预选之后只剩下一个node，就使用它
 	if len(filteredNodes) == 1 {
 		metrics.SchedulingAlgorithmPriorityEvaluationDuration.Observe(metrics.SinceInSeconds(startPriorityEvalTime))
 		metrics.DeprecatedSchedulingAlgorithmPriorityEvaluationDuration.Observe(metrics.SinceInMicroseconds(startPriorityEvalTime))
@@ -252,6 +257,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 	}
 
 	metaPrioritiesInterface := g.priorityMetaProducer(pod, filteredNodes, g.nodeInfoSnapshot)
+	//todo: 5.Priority阶段：执行优选算法，获取打分之后的node列表
 	priorityList, err := g.prioritizeNodes(ctx, state, pod, metaPrioritiesInterface, filteredNodes)
 	if err != nil {
 		return result, err
@@ -261,7 +267,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 	metrics.DeprecatedSchedulingAlgorithmPriorityEvaluationDuration.Observe(metrics.SinceInMicroseconds(startPriorityEvalTime))
 	metrics.SchedulingLatency.WithLabelValues(metrics.PriorityEvaluation).Observe(metrics.SinceInSeconds(startPriorityEvalTime))
 	metrics.DeprecatedSchedulingLatency.WithLabelValues(metrics.PriorityEvaluation).Observe(metrics.SinceInSeconds(startPriorityEvalTime))
-
+	//todo: 6.根据打分选择分数最高的node
 	host, err := g.selectHost(priorityList)
 	trace.Step("Prioritizing done")
 
@@ -483,6 +489,12 @@ func (g *genericScheduler) findNodesThatFit(ctx context.Context, state *framewor
 		filtered = g.nodeInfoSnapshot.ListNodes()
 	} else {
 		allNodes := len(g.nodeInfoSnapshot.NodeInfoList)
+		//todo: 根据一定的算法，计算并返回预选算法要筛选的node节点数量
+		// 小于100个节点的话，那么就直接的使用所有的node。
+		// 返回的node节点数量值=node节点数量*（50-node节点数量/125）/100；
+		// 当配置参数percentageOfNodesToScore大于0时，返回的node节点数量值=node节点数量*percentageOfNodesToScore/100
+		// 当计算得出的node节点数量小于100时，任然返回最小值100
+		// 配置参数percentageOfNodesToScore说明：该参数用于kube-scheduler调度器性能调优，允许执行调度预选算法时在找到一定数量的可行node节点后停止寻找更多的节点，提高了调度器在大型集群中的性能
 		numNodesToFind := g.numFeasibleNodesToFind(int32(allNodes))
 
 		// Create filtered list with enough space to avoid growing it
@@ -499,11 +511,13 @@ func (g *genericScheduler) findNodesThatFit(ctx context.Context, state *framewor
 		// We can use the same metadata producer for all nodes.
 		meta := g.predicateMetaProducer(pod, g.nodeInfoSnapshot)
 		state.Write(migration.PredicatesStateKey, &migration.PredicatesStateData{Reference: meta})
-
+       // 定义checkNode函数，用于筛选合适的node节点
 		checkNode := func(i int) {
 			// We check the nodes starting from where we left off in the previous scheduling cycle,
 			// this is to make sure all nodes have the same chance of being examined across pods.
+			//todo: （1）从nodes快照中取出一个node
 			nodeInfo := g.nodeInfoSnapshot.NodeInfoList[(g.nextStartNodeIndex+i)%allNodes]
+			//todo: （2）对该pod在该node上执行所有的已注册的预选算法
 			fits, failedPredicates, status, err := g.podFitsOnNode(
 				ctx,
 				state,
@@ -517,6 +531,7 @@ func (g *genericScheduler) findNodesThatFit(ctx context.Context, state *framewor
 				return
 			}
 			if fits {
+				//todo: （3）当已经找到的合适的node节点数量已经大于要筛选的node节点数量时，调用cacel函数，不再继续找
 				length := atomic.AddInt32(&filteredLen, 1)
 				if length > numNodesToFind {
 					cancel()
@@ -538,6 +553,7 @@ func (g *genericScheduler) findNodesThatFit(ctx context.Context, state *framewor
 
 		// Stops searching for more nodes once the configured number of feasible nodes
 		// are found.
+		//todo: 开启16个线程来调用checkNode方法寻找合适的节点
 		workqueue.ParallelizeUntil(ctx, 16, allNodes, checkNode)
 		processedNodes := int(filteredLen) + len(filteredNodesStatuses) + len(failedPredicateMap)
 		g.nextStartNodeIndex = (g.nextStartNodeIndex + processedNodes) % allNodes
@@ -547,14 +563,18 @@ func (g *genericScheduler) findNodesThatFit(ctx context.Context, state *framewor
 			return []*v1.Node{}, FailedPredicateMap{}, framework.NodeToStatusMap{}, err
 		}
 	}
-
+    // filtered 表示已经满足被调度的node的列表。。
+    // 并且判断扩展插件不是0的情况下。
 	if len(filtered) > 0 && len(g.extenders) != 0 {
+		// todo： 调用注册的外部调度插件，采用http extenders的方式，主要是外部的预选插件
 		for _, extender := range g.extenders {
 			if !extender.IsInterested(pod) {
 				continue
 			}
+			// 把所有的经过预选的node给外部的插件进行在判断。
 			filteredList, failedMap, err := extender.Filter(pod, filtered, g.nodeInfoSnapshot.NodeInfoMap)
 			if err != nil {
+				//todo: 如果插件返回的错误不能被会略，那么本次的调度就失败了。。
 				if extender.IsIgnorable() {
 					klog.Warningf("Skipping extender %v as it returned error %v and has ignorable flag set",
 						extender, err)
@@ -570,6 +590,7 @@ func (g *genericScheduler) findNodesThatFit(ctx context.Context, state *framewor
 				}
 				failedPredicateMap[failedNodeName] = append(failedPredicateMap[failedNodeName], predicates.NewFailureReason(failedMsg))
 			}
+			//todo: 最终用外部插件过滤后的结果做为结果。如果外部插件都没有通过，那么这个调度就不能正常进行了。。
 			filtered = filteredList
 			if len(filtered) == 0 {
 				break
@@ -669,7 +690,9 @@ func (g *genericScheduler) podFitsOnNode(
 		stateToUse := state
 		nodeInfoToUse := info
 		if i == 0 {
+			//todo: 处理抢占pod（优先级更高的pod）的逻辑
 			var err error
+			//todo: // 在addNominatedPods中，会将node上的nominatedPod列举出来，即将抢占pod考虑到其中，然后后面再执行预选算法
 			podsAdded, metaToUse, stateToUse, nodeInfoToUse, err = g.addNominatedPods(ctx, pod, meta, state, info)
 			if err != nil {
 				return false, []predicates.PredicateFailureReason{}, nil, err
@@ -677,7 +700,8 @@ func (g *genericScheduler) podFitsOnNode(
 		} else if !podsAdded || len(failedPredicates) != 0 || !status.IsSuccess() {
 			break
 		}
-
+       //todo: 定义了预选算法的先后顺序
+		// 包含了全部预选算法的列表，并定义了预选算法的先后顺序，所以当需要扩展预选算法的时候必须要记得将其名称添加到此列表中
 		for _, predicateKey := range predicates.Ordering() {
 			var (
 				fit     bool
@@ -729,6 +753,7 @@ func (g *genericScheduler) prioritizeNodes(
 ) (framework.NodeScoreList, error) {
 	// If no priority configs are provided, then all nodes will have a score of one.
 	// This is required to generate the priority list in the required format
+	//todo: 如果没有注册优选算法，则所有node节点的得分都为1分
 	if len(g.prioritizers) == 0 && len(g.extenders) == 0 && !g.framework.HasScorePlugins() {
 		result := make(framework.NodeScoreList, 0, len(nodes))
 		for i := range nodes {
@@ -756,7 +781,8 @@ func (g *genericScheduler) prioritizeNodes(
 	for i := range g.prioritizers {
 		results[i] = make(framework.NodeScoreList, len(nodes))
 	}
-
+    //todo: 启动16个goroutine并发为node节点执行优选算法的Map，并记录每个节点的每个优选算法的打分
+    // 启动16个goroutine并发为node节点执行优选算法的Map，并记录每个节点的每个优选算法的打分
 	workqueue.ParallelizeUntil(context.TODO(), 16, len(nodes), func(index int) {
 		nodeInfo := g.nodeInfoSnapshot.NodeInfoMap[nodes[index].Name]
 		for i := range g.prioritizers {
@@ -798,6 +824,7 @@ func (g *genericScheduler) prioritizeNodes(
 
 	// Run the Score plugins.
 	state.Write(migration.PrioritiesStateKey, &migration.PrioritiesStateData{Reference: meta})
+	//todo: 执行调用"Score" plugins；
 	scoresMap, scoreStatus := g.framework.RunScorePlugins(ctx, state, pod, nodes)
 	if !scoreStatus.IsSuccess() {
 		return framework.NodeScoreList{}, scoreStatus.AsError()
@@ -805,7 +832,7 @@ func (g *genericScheduler) prioritizeNodes(
 
 	// Summarize all scores.
 	result := make(framework.NodeScoreList, 0, len(nodes))
-
+	//todo: 汇总每个node节点的分数（node节点的分数=每个优选算法的得分*该优选算法的权重）
 	for i := range nodes {
 		result = append(result, framework.NodeScore{Name: nodes[i].Name, Score: 0})
 		for j := range g.prioritizers {
@@ -816,7 +843,7 @@ func (g *genericScheduler) prioritizeNodes(
 			result[i].Score += scoresMap[j][i].Score
 		}
 	}
-
+    //todo: 调用扩展插件的优先逻辑。。
 	if len(g.extenders) != 0 && nodes != nil {
 		combinedScores := make(map[string]int64, len(g.nodeInfoSnapshot.NodeInfoList))
 		for i := range g.extenders {
@@ -848,6 +875,7 @@ func (g *genericScheduler) prioritizeNodes(
 		}
 		// wait for all go routines to finish
 		wg.Wait()
+		//todo: 根据优先的分数计算总分数
 		for i := range result {
 			// MaxExtenderPriority may diverge from the max priority used in the scheduler and defined by MaxNodeScore,
 			// therefore we need to scale the score returned by extenders to the score range used by the scheduler.
