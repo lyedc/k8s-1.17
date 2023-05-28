@@ -65,6 +65,9 @@ type realContainerGC struct {
 }
 
 // New ContainerGC instance with the specified policy.
+//TODO: containerGC的对象是：NewKubeGenericRuntimeManager　中的ＧＣ，是newContainerGC创建的ｇｃ
+// 因为runtime是kuberuntime.NewKubeGenericRuntimeManager初始化的。
+//最终执行的是： kuberuntime_gc.go中的GC收集器。
 func NewContainerGC(runtime Runtime, policy ContainerGCPolicy, sourcesReadyProvider SourcesReadyProvider) (ContainerGC, error) {
 	if policy.MinAge < 0 {
 		return nil, fmt.Errorf("invalid minimum garbage collection age: %v", policy.MinAge)

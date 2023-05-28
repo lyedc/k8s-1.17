@@ -1166,7 +1166,7 @@ func createAndInitKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	nodeStatusMaxImages int32) (k kubelet.Bootstrap, err error) {
 	// TODO: block until all sources have delivered at least one update to the channel, or break the sync loop
 	// up into "per source" synchronizations
-
+    //todo: 初始化kubelet的主要配置逻辑。
 	k, err = kubelet.NewMainKubelet(kubeCfg,
 		kubeDeps,
 		crOptions,
@@ -1203,7 +1203,8 @@ func createAndInitKubelet(kubeCfg *kubeletconfiginternal.KubeletConfiguration,
 	}
 
 	k.BirthCry()
-
+    //todo: 开启的是containerGC的垃圾收集器。
+    //代码路径在/pkg/kubelet/container/container_gc，最终执行的是kuberuntime_gc中的垃圾处理
 	k.StartGarbageCollection()
 
 	return k, nil

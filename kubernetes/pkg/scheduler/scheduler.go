@@ -660,6 +660,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	// Otherwise, binding of volumes is started after the pod is assumed, but before pod binding.
 	//
 	// This function modifies 'assumedPod' if volume binding is required.
+	//todo: 这里对需要的volume进行绑定的操作，是在延迟绑定阶段。
 	allBound, err := sched.VolumeBinder.Binder.AssumePodVolumes(assumedPod, scheduleResult.SuggestedHost)
 	if err != nil {
 		sched.recordSchedulingFailure(assumedPodInfo, err, SchedulerError,
@@ -745,7 +746,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 			sched.recordSchedulingFailure(assumedPodInfo, preBindStatus.AsError(), reason, preBindStatus.Message())
 			return
 		}
-        // 对pod进行绑定，也就是给apiserver发送请求，告诉apiserver  pod 被调度到这个服务器上了。
+        //todo: 对pod进行绑定，也就是给apiserver发送请求，告诉apiserver  pod 被调度到这个服务器上了。
 		err := sched.bind(bindingCycleCtx, assumedPod, scheduleResult.SuggestedHost, state)
 		metrics.E2eSchedulingLatency.Observe(metrics.SinceInSeconds(start))
 		metrics.DeprecatedE2eSchedulingLatency.Observe(metrics.SinceInMicroseconds(start))

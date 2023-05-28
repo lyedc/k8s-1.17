@@ -134,6 +134,7 @@ func (cgc *containerGC) removeOldestN(containers []containerGCInfo, toRemove int
 				ID:   containers[i].id,
 			}
 			message := "Container is in unknown state, try killing it before removal"
+			//todo: 先停止container。然后在移除container
 			if err := cgc.manager.killContainer(nil, id, containers[i].name, message, nil); err != nil {
 				klog.Errorf("Failed to stop container %q: %v", containers[i].id, err)
 				continue
@@ -221,6 +222,7 @@ func (cgc *containerGC) evictableContainers(minAge time.Duration) (containersByE
 // evict all containers that are evictable
 func (cgc *containerGC) evictContainers(gcPolicy kubecontainer.ContainerGCPolicy, allSourcesReady bool, evictTerminatedPods bool) error {
 	// Separate containers by evict units.
+	//todo: 获取所有的没有在运行状态的containers，也就是container的status不是running的。
 	evictUnits, err := cgc.evictableContainers(gcPolicy.MinAge)
 	if err != nil {
 		return err
