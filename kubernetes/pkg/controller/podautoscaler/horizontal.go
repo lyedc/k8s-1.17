@@ -161,6 +161,7 @@ func (a *HorizontalController) Run(stopCh <-chan struct{}) {
 	}
 
 	// start a single worker (we may wish to start more in the future)
+	// 每秒钟执行一次hpa的能力。
 	go wait.Until(a.worker, time.Second, stopCh)
 
 	<-stopCh

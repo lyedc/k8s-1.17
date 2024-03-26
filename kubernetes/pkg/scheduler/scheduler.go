@@ -428,6 +428,7 @@ func (sched *Scheduler) Run(ctx context.Context) {
 // recordFailedSchedulingEvent records an event for the pod that indicates the
 // pod has failed to schedule.
 // NOTE: This function modifies "pod". "pod" should be copied before being passed.
+// 当调度失败后，会通过 sched.error方法把调度失败的pod，放入到 backQueue队列中。然后会有goro在网activeQ中放
 func (sched *Scheduler) recordSchedulingFailure(podInfo *framework.PodInfo, err error, reason string, message string) {
 	sched.Error(podInfo, err)
 	pod := podInfo.Pod
@@ -446,12 +447,13 @@ func (sched *Scheduler) recordSchedulingFailure(podInfo *framework.PodInfo, err 
 // If it succeeds, it adds the name of the node where preemption has happened to the pod spec.
 // It returns the node name and an error if any.
 func (sched *Scheduler) preempt(ctx context.Context, state *framework.CycleState, fwk framework.Framework, preemptor *v1.Pod, scheduleErr error) (string, error) {
+	// 通过apiserver获取Pod的情况。
 	preemptor, err := sched.podPreemptor.getUpdatedPod(preemptor)
 	if err != nil {
 		klog.Errorf("Error getting the updated preemptor pod object: %v", err)
 		return "", err
 	}
-
+	// 执行抢占逻辑，该函数会返回抢占成功的 node、被抢占的 pods(victims) 以及需要被移除已提名的 pods
 	node, victims, nominatedPodsToClear, err := sched.Algorithm.Preempt(ctx, state, preemptor, scheduleErr)
 	if err != nil {
 		klog.Errorf("Error preempting victims to make room for %v/%v: %v", preemptor.Namespace, preemptor.Name, err)
@@ -463,6 +465,7 @@ func (sched *Scheduler) preempt(ctx context.Context, state *framework.CycleState
 		// Update the scheduling queue with the nominated pod information. Without
 		// this, there would be a race condition between the next scheduling cycle
 		// and the time the scheduler receives a Pod Update for the nominated pod.
+		// 如果抢占成功，就把pod和抢占的node加入到 nominatedPodMap中。。
 		sched.SchedulingQueue.UpdateNominatedPodForNode(preemptor, nodeName)
 
 		// Make a call to update nominated node name of the pod on the API server.
@@ -472,7 +475,7 @@ func (sched *Scheduler) preempt(ctx context.Context, state *framework.CycleState
 			sched.SchedulingQueue.DeleteNominatedPodIfExists(preemptor)
 			return "", err
 		}
-
+        // 需要删除的pod对象。也就是被抢占的Pod
 		for _, victim := range victims {
 			if err := sched.podPreemptor.deletePod(victim); err != nil {
 				klog.Errorf("Error preempting pod %v/%v: %v", victim.Namespace, victim.Name, err)
@@ -614,6 +617,7 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 	scheduleResult, err := sched.Algorithm.Schedule(schedulingCycleCtx, state, pod)
 	if err != nil {
 		//todo: 3.当执行调度算法失败时，上报调度失败event，更新pod的status
+		// 当调度失败后，会通过 sched.error方法把调度失败的pod，放入到 backQueue队列中。然后会有goro在网activeQ中放
 		sched.recordSchedulingFailure(podInfo.DeepCopy(), err, v1.PodReasonUnschedulable, err.Error())
 		// Schedule() may have failed because the pod would not fit on any host, so we try to
 		// preempt, with the expectation that the next time the pod is tried for scheduling it
@@ -621,11 +625,18 @@ func (sched *Scheduler) scheduleOne(ctx context.Context) {
 		// into the resources that were preempted, but this is harmless.
 		if fitError, ok := err.(*core.FitError); ok {
 			//todo: 4.当没有找到合适的节点时，判断scheduler是否开启了抢占调度机制，是则调用sched.preempt执行抢占逻辑
+			// 抢占者并不会立刻被调度到被抢占的 node 上，
+			//调度器只会将抢占者的 status.nominatedNodeName
+			//字段设置为被抢占的 node 的名字。
+			//然后，抢占者会重新进入下一个调度周期，
+			//在新的调度周期里来决定是不是要运行在被抢占的节点上，
+			//当然，即使在下一个调度周期，调度器也不会保证抢占者一定会运行在被抢占的节点上
 			if sched.DisablePreemption {
 				klog.V(3).Infof("Pod priority feature is not enabled or preemption is disabled by scheduler configuration." +
 					" No preemption is performed.")
 			} else {
 				preemptionStartTime := time.Now()
+				// 执行抢占机制
 				sched.preempt(schedulingCycleCtx, state, fwk, pod, fitError)
 				metrics.PreemptionAttempts.Inc()
 				metrics.SchedulingAlgorithmPreemptionEvaluationDuration.Observe(metrics.SinceInSeconds(preemptionStartTime))

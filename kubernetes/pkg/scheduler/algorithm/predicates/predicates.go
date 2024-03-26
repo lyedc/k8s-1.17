@@ -791,13 +791,14 @@ func PodFitsResources(pod *v1.Pod, meta Metadata, nodeInfo *schedulernodeinfo.No
 
 	var predicateFails []PredicateFailureReason
 	allowedPodNumber := nodeInfo.AllowedPodNumber()
+	// 如果目标Node上的Pod数量超过上限，则记录原因后返回失败
 	if len(nodeInfo.Pods())+1 > allowedPodNumber {
 		predicateFails = append(predicateFails, NewInsufficientResourceError(v1.ResourcePods, 1, int64(len(nodeInfo.Pods())), int64(allowedPodNumber)))
 	}
 
 	// No extended resources should be ignored by default.
 	ignoredExtendedResources := sets.NewString()
-
+	// 这里拿到的是Pod运行所需要的最大资源用量(基于Request来计算)
 	var podRequest *schedulernodeinfo.Resource
 	if predicateMeta, ok := meta.(*predicateMetadata); ok && predicateMeta.podFitsResourcesMetadata != nil {
 		podRequest = predicateMeta.podFitsResourcesMetadata.podRequest
@@ -808,6 +809,7 @@ func PodFitsResources(pod *v1.Pod, meta Metadata, nodeInfo *schedulernodeinfo.No
 		// We couldn't parse metadata - fallback to computing it.
 		podRequest = GetResourceRequest(pod)
 	}
+	// 如果Pod的QoS为BestEffort，则直接返回即可，因为该Pod与资源不密切绑定
 	if podRequest.MilliCPU == 0 &&
 		podRequest.Memory == 0 &&
 		podRequest.EphemeralStorage == 0 &&

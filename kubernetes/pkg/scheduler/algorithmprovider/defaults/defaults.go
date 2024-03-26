@@ -33,6 +33,7 @@ const (
 	ClusterAutoscalerProvider = "ClusterAutoscalerProvider"
 )
 
+//todo: 注册的默认调度策略，
 func init() {
 	registerAlgorithmProvider(defaultPredicates(), defaultPriorities())
 }

@@ -207,7 +207,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 	}
 
 	// Run "prefilter" plugins.
-	//todo: 调度框架
+	//todo: 执行预选插件，默认是没有任何插件的，原生的调度器这里什么也不执行。
 	preFilterStatus := g.framework.RunPreFilterPlugins(ctx, state, pod)
 	if !preFilterStatus.IsSuccess() {
 		return result, preFilterStatus.AsError()
@@ -217,6 +217,7 @@ func (g *genericScheduler) Schedule(ctx context.Context, state *framework.CycleS
 	startPredicateEvalTime := time.Now()
 	//todo: 2.Predict阶段：找到所有满足调度条件的节点feasibleNodes，不满足的就直接过滤
 	// // 根据prefilter插件和extender过滤节点以找到适合 pod 的节点。
+	// 在这里会调用注册的外部调度插件，采用http extenders的方式，主要是外部的预选插件
 	filteredNodes, failedPredicateMap, filteredNodesStatuses, err := g.findNodesThatFit(ctx, state, pod)
 	if err != nil {
 		return result, err
@@ -345,6 +346,7 @@ func (g *genericScheduler) Preempt(ctx context.Context, state *framework.CycleSt
 	if len(g.nodeInfoSnapshot.NodeInfoMap) == 0 {
 		return nil, nil, nil, ErrNoNodesAvailable
 	}
+	// 过滤 predicates 算法执行失败的 node 作为抢占的候选 node
 	potentialNodes := nodesWherePreemptionMightHelp(g.nodeInfoSnapshot.NodeInfoMap, fitError)
 	if len(potentialNodes) == 0 {
 		klog.V(3).Infof("Preemption will not help schedule pod %v/%v on any node.", pod.Namespace, pod.Name)
@@ -361,6 +363,7 @@ func (g *genericScheduler) Preempt(ctx context.Context, state *framework.CycleSt
 			return nil, nil, nil, err
 		}
 	}
+	// 过滤出可以抢占的 node 列表
 	nodeToVictims, err := g.selectNodesForPreemption(ctx, state, pod, potentialNodes, pdbs)
 	if err != nil {
 		return nil, nil, nil, err
@@ -373,7 +376,7 @@ func (g *genericScheduler) Preempt(ctx context.Context, state *framework.CycleSt
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
+	// 选出最佳的 node
 	candidateNode := pickOneNodeForPreemption(nodeToVictims)
 	if candidateNode == nil {
 		return nil, nil, nil, nil
@@ -383,6 +386,8 @@ func (g *genericScheduler) Preempt(ctx context.Context, state *framework.CycleSt
 	// this node. So, we should remove their nomination. Removing their
 	// nomination updates these pods and moves them to the active queue. It
 	// lets scheduler find another place for them.
+	// 移除低优先级 pod 的 Nominated，更新这些 pod，移动到 activeQ 队列中，让调度器
+	// 为这些 pod 重新 bind node
 	nominatedPods := g.getLowerPriorityNominatedPods(pod, candidateNode.Name)
 	if nodeInfo, ok := g.nodeInfoSnapshot.NodeInfoMap[candidateNode.Name]; ok {
 		return nodeInfo.Node(), nodeToVictims[candidateNode].Pods, nominatedPods, nil
@@ -484,7 +489,7 @@ func (g *genericScheduler) findNodesThatFit(ctx context.Context, state *framewor
 	var filtered []*v1.Node
 	failedPredicateMap := FailedPredicateMap{}
 	filteredNodesStatuses := framework.NodeToStatusMap{}
-
+	//todo: 如果没有任何预选函数以及预选策略插件，则默认预选范围=全部节点
 	if len(g.predicates) == 0 && !g.framework.HasFilterPlugins() {
 		filtered = g.nodeInfoSnapshot.ListNodes()
 	} else {
@@ -728,7 +733,8 @@ func (g *genericScheduler) podFitsOnNode(
 				}
 			}
 		}
-
+		//todo: 这里是真正为Pod和Node运行所有预选策略(Filter)的地方，内部其实就是个循环
+		// 如果在循环执行的过程中有任何一个Filter返回失败那就不再继续执行了，直接返回
 		status = g.framework.RunFilterPlugins(ctx, stateToUse, pod, nodeInfoToUse)
 		if !status.IsSuccess() && !status.IsUnschedulable() {
 			return false, failedPredicates, status, status.AsError()
@@ -779,6 +785,7 @@ func (g *genericScheduler) prioritizeNodes(
 	results := make([]framework.NodeScoreList, len(g.prioritizers))
 
 	for i := range g.prioritizers {
+		// results内部每个子数组的size = 预选后所剩下的节点数量，默认最大100
 		results[i] = make(framework.NodeScoreList, len(nodes))
 	}
     //todo: 启动16个goroutine并发为node节点执行优选算法的Map，并记录每个节点的每个优选算法的打分
@@ -824,7 +831,18 @@ func (g *genericScheduler) prioritizeNodes(
 
 	// Run the Score plugins.
 	state.Write(migration.PrioritiesStateKey, &migration.PrioritiesStateData{Reference: meta})
-	//todo: 执行调用"Score" plugins；
+	//todo: 执行调用"Score" 开始执行真实的优先策略；
+	// 开始遍历运行Score插件，得到优选策略为当前待调度Pod给每一个预选节点上的打分
+	// 需要注意的是，这里得到的打分结果已经经过了其优选策略本身所定义的权重系数处理
+	// 这里所返回的 `scoresMap` 是一个 key = Score插件名称，value为所有指定插件在Node上的打分列表
+	// 比如:
+	// scoresMap = map[string]NodeScoreList{
+	//   "DefaultPodTopologySpread": []NodeScoreList{
+	//       NodeScoreList{Name: "node1", Score: 81},
+	//       NodeScoreList{Name: "node2", Score: 60},
+	//       NodeScoreList{Name: "node2", Score: 0},
+	//   },
+	// }
 	scoresMap, scoreStatus := g.framework.RunScorePlugins(ctx, state, pod, nodes)
 	if !scoreStatus.IsSuccess() {
 		return framework.NodeScoreList{}, scoreStatus.AsError()

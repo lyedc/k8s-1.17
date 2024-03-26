@@ -181,7 +181,7 @@ func NewFramework(r Registry, plugins *config.Plugins, args []config.PluginConfi
 	for i := range args {
 		pluginConfig[args[i].Name] = &args[i].Args
 	}
-
+    //todo: 存储各种注册上来的plugin的factory
 	pluginsMap := make(map[string]Plugin)
 	for name, factory := range r {
 		// initialize only needed plugins.
@@ -485,6 +485,7 @@ func (f *framework) RunScorePlugins(ctx context.Context, state *CycleState, pod 
 	errCh := schedutil.NewErrorChannel()
 
 	// Run Score method for each node in parallel.
+	// 这是第一轮打分，用16个go-routines并发得到每一个优选策略插件为当前Pod和Node的打分信息
 	workqueue.ParallelizeUntil(ctx, 16, len(nodes), func(index int) {
 		for _, pl := range f.scorePlugins {
 			nodeName := nodes[index].Name
@@ -494,8 +495,8 @@ func (f *framework) RunScorePlugins(ctx context.Context, state *CycleState, pod 
 				return
 			}
 			pluginToNodeScores[pl.Name()][index] = NodeScore{
-				Name:  nodeName,
-				Score: int64(s),
+				Name:  nodeName,// 这里记录的是节点名称
+				Score: int64(s),// 这里记录的是当前节点的打分结果
 			}
 		}
 	})
@@ -506,6 +507,9 @@ func (f *framework) RunScorePlugins(ctx context.Context, state *CycleState, pod 
 	}
 
 	// Run NormalizeScore method for each ScorePlugin in parallel.
+	// 这是第二轮打分，但这次不是重新打分，而是对已有打分做标准化处理(Normalize Scoring)
+	// 需要注意的是，并不是所有优选插件都具备打分标准化处理流程(需实现ScoreExtensions接口)
+	// 我已经在默认配置的8个优选插件列表表格内给出了标注
 	workqueue.ParallelizeUntil(ctx, 16, len(f.scorePlugins), func(index int) {
 		pl := f.scorePlugins[index]
 		nodeScoreList := pluginToNodeScores[pl.Name()]
@@ -526,9 +530,14 @@ func (f *framework) RunScorePlugins(ctx context.Context, state *CycleState, pod 
 	}
 
 	// Apply score defaultWeights for each ScorePlugin in parallel.
+	// 第三轮，这次是用于判断评分是否超过规则
+	// - 如果超过了就返回错误
+	// - 如果没超过，则乘以每个优选评分插件所被设置的权重
 	workqueue.ParallelizeUntil(ctx, 16, len(f.scorePlugins), func(index int) {
 		pl := f.scorePlugins[index]
 		// Score plugins' weight has been checked when they are initialized.
+		//todo: `f.pluginNameToWeightMap` 这里记录了所有优选插件的权重信息
+		// 这个集合的内容是在初始化时被注入的
 		weight := f.pluginNameToWeightMap[pl.Name()]
 		nodeScoreList := pluginToNodeScores[pl.Name()]
 
@@ -539,6 +548,7 @@ func (f *framework) RunScorePlugins(ctx context.Context, state *CycleState, pod 
 				errCh.SendErrorWithCancel(err, cancel)
 				return
 			}
+			// 如果没超过，则乘以每个优选评分插件所被设置的权重
 			nodeScoreList[i].Score = nodeScore.Score * int64(weight)
 		}
 	})
